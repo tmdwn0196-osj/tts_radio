@@ -1,8 +1,11 @@
 from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+load_dotenv()
 
 from backend.data.news import get_news, make_tts, summarize_articles
 
@@ -32,10 +35,12 @@ def summarize(request: SummarizeRequest) -> dict:
     articles = get_news(keyword)
     summary = summarize_articles(articles)
     audio_url = make_tts(keyword, summary, articles)
+    summary_provider = articles[0].get("summary_provider", "extractive") if articles else "extractive"
 
     return {
         "keyword": keyword,
         "articles": articles,
         "summary": summary,
+        "summary_provider": summary_provider,
         "audio_url": audio_url,
     }
