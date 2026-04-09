@@ -350,6 +350,7 @@ def inject_styles() -> None:
         .empty-card {
             position: relative;
             overflow: hidden;
+            min-width: 0;
             padding: 1.25rem 1.2rem;
             border: 1px solid var(--line);
             border-radius: 26px;
@@ -407,6 +408,9 @@ def inject_styles() -> None:
             margin: 0;
             font-family: "Noto Serif KR", serif;
             line-height: 1.34;
+            white-space: normal;
+            overflow-wrap: anywhere;
+            word-break: keep-all;
         }
 
         .lead-story h3 {
@@ -417,7 +421,16 @@ def inject_styles() -> None:
         .story-card h3,
         .empty-card h3 {
             font-size: 1.22rem;
-            padding-right: 2.7rem;
+            padding-right: 4rem;
+        }
+
+        .lead-story h3 a,
+        .story-card h3 a,
+        .empty-card h3 a {
+            display: block;
+            white-space: inherit;
+            overflow-wrap: inherit;
+            word-break: inherit;
         }
 
         .lead-story a,
@@ -536,7 +549,7 @@ def provider_label(summary_provider: str) -> str:
 def current_issue_label() -> str:
     now = datetime.now(KST)
     day_label = DAY_LABELS[now.weekday()]
-    return f"{now:%Y.%m.%d} {day_label} | SEOUL EDITION"
+    return f"{now:%Y.%m.%d} {day_label} | ULSAN EDITION"
 
 
 def render_masthead() -> None:
@@ -630,6 +643,21 @@ def story_meta(article: dict) -> str:
     return "".join(f"<span>{html.escape(part)}</span>" for part in parts if part)
 
 
+def story_title(article: dict, variant: str) -> str:
+    def trim_title(raw_title: str) -> str:
+        if not raw_title:
+            return ""
+        head, separator, _ = raw_title.partition("<")
+        cleaned = head.strip() if separator else raw_title.strip()
+        return cleaned or raw_title.replace("<", "").strip()
+
+    if variant == "lead":
+        title = article.get("lead_title") or article.get("card_title") or article.get("title", "")
+    else:
+        title = article.get("card_title") or article.get("lead_title") or article.get("title", "")
+    return trim_title(title)
+
+
 def story_copy(article: dict) -> str:
     summary_lines = article.get("summary_lines") or [
         line for line in article.get("snippet", "").splitlines() if line.strip()
@@ -639,13 +667,14 @@ def story_copy(article: dict) -> str:
 
 
 def render_lead_story(article: dict) -> None:
+    title = story_title(article, "lead")
     st.markdown(
         f"""
         <article class="lead-story">
             <div class="story-kicker">Lead Story</div>
             <h3>
                 <a href="{html.escape(article['url'])}" target="_blank" rel="noopener noreferrer">
-                    {html.escape(article['title'])}
+                    {html.escape(title)}
                 </a>
             </h3>
             <div class="story-meta">{story_meta(article)}</div>
@@ -660,6 +689,7 @@ def render_lead_story(article: dict) -> None:
 
 
 def render_story_card(article: dict, index: int) -> None:
+    title = story_title(article, "card")
     st.markdown(
         f"""
         <article class="story-card">
@@ -667,7 +697,7 @@ def render_story_card(article: dict, index: int) -> None:
             <div class="story-rank">{index:02d}</div>
             <h3>
                 <a href="{html.escape(article['url'])}" target="_blank" rel="noopener noreferrer">
-                    {html.escape(article['title'])}
+                    {html.escape(title)}
                 </a>
             </h3>
             <div class="story-meta">{story_meta(article)}</div>
