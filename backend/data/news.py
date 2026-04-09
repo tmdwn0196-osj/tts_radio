@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import re
+import unicodedata
 import uuid
 from collections import Counter
 from datetime import datetime, timedelta
@@ -63,6 +64,16 @@ PUBLISHED_META_FIELDS = {
     "article.created",
     "article.createdat",
 }
+TITLE_META_FIELDS = {
+    "og:title",
+    "twitter:title",
+    "title",
+    "headline",
+    "parsely-title",
+    "article:title",
+}
+LEAD_TITLE_MAX_WIDTH = 96
+CARD_TITLE_MAX_WIDTH = 84
 STOPWORDS = {
     "기자",
     "뉴스",
@@ -143,6 +154,172 @@ def shorten_text(text: str, max_length: int) -> str:
     if last_break >= max_length // 2:
         return shortened[: last_break + 1].strip()
     return shortened.rstrip(" ,") + "..."
+
+
+def display_width(text: str) -> int:
+    return sum(2 if unicodedata.east_asian_width(char) in {"F", "W"} else 1 for char in text)
+
+
+def strip_trailing_ellipsis(text: str) -> str:
+    cleaned = clean_text(text)
+    cleaned = re.sub(r"\s*(?:\.\.\.|\u2026)+\s*$", "", cleaned)
+    return cleaned.strip()
+
+
+def finalize_compact_title(text: str) -> str:
+    cleaned = clean_text(text)
+    cleaned = cleaned.rstrip(" -|/:;,")
+    cleaned = cleaned.rstrip("([{\"'")
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return strip_trailing_ellipsis(cleaned)
+
+
+def remove_trailing_category_suffix(title: str) -> str:
+    normalized = finalize_compact_title(title)
+    if "< " not in normalized:
+        return normalized
+
+    match = re.search(r"\s<\s*([^<]+(?:<\s*[^<]+)*)\s*$", normalized)
+    if not match:
+        return normalized
+
+    head = finalize_compact_title(normalized[: match.start()])
+    tail = match.group(1)
+    segments = [finalize_compact_title(part) for part in re.split(r"\s*<\s*", tail) if part.strip()]
+    if not head or not segments:
+        return normalized
+
+    short_category_segments = all(
+        segment
+        and display_width(segment) <= 12
+        and re.fullmatch(r"[0-9A-Za-z가-힣]+", segment)
+        for segment in segments
+    )
+    if not short_category_segments:
+        return normalized
+
+    if len(segments) >= 2 or segments[-1] in {"기사본문", "본문"}:
+        return head
+
+    return normalized
+
+
+def normalize_article_title(title: str) -> str:
+    return remove_trailing_category_suffix(finalize_compact_title(title))
+
+
+def remove_leading_label(title: str) -> str:
+    return finalize_compact_title(re.sub(r"^\[[^\]]{1,12}\]\s*", "", title).strip())
+
+
+def remove_source_suffix(title: str) -> str:
+    normalized = normalize_article_title(title)
+    for separator in (" | ", " ｜ ", " :: ", " >> ", " » "):
+        if separator not in normalized:
+            continue
+        head, tail = normalized.rsplit(separator, 1)
+        head = finalize_compact_title(head)
+        tail = finalize_compact_title(tail)
+        if head and tail and display_width(tail) <= 14:
+            return head
+    return normalized
+
+
+def best_natural_cut(title: str, max_width: int) -> str:
+    width = 0
+    last_space_cut = -1
+    last_punct_cut = -1
+
+    for index, char in enumerate(title):
+        width += display_width(char)
+        if char.isspace():
+            last_space_cut = index
+        elif char in {",", ":", ";", "/", "|", "-", "\u00b7", ")", "]"}:
+            last_punct_cut = index + 1
+        if width > max_width:
+            break
+
+    candidates = [title[:last_space_cut], title[:last_punct_cut]]
+    for candidate in candidates:
+        compact = finalize_compact_title(candidate)
+        if compact and display_width(compact) >= int(max_width * 0.6):
+            return compact
+
+    return ""
+
+
+def trim_title_to_width(title: str, max_width: int) -> str:
+    normalized = normalize_article_title(title)
+    if not normalized or display_width(normalized) <= max_width:
+        return normalized
+
+    natural_cut = best_natural_cut(normalized, max_width)
+    if natural_cut:
+        return natural_cut
+
+    tokens = [token for token in normalized.split() if token]
+    selected: list[str] = []
+    width = 0
+
+    for token in tokens:
+        token_width = display_width(token) + (1 if selected else 0)
+        if width + token_width > max_width:
+            break
+        selected.append(token)
+        width += token_width
+
+    if selected:
+        return finalize_compact_title(" ".join(selected))
+
+    pieces: list[str] = []
+    width = 0
+    for char in normalized:
+        char_width = display_width(char)
+        if width + char_width > max_width:
+            break
+        pieces.append(char)
+        width += char_width
+    return finalize_compact_title("".join(pieces))
+
+
+def build_display_title(title: str, max_width: int) -> str:
+    normalized = normalize_article_title(title)
+    if not normalized:
+        return ""
+    if display_width(normalized) <= max_width:
+        return normalized
+
+    candidates = [normalized]
+    without_source = remove_source_suffix(normalized)
+    without_label = remove_leading_label(normalized)
+
+    for candidate in (without_source, without_label):
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+
+    trimmed_candidates = [
+        trim_title_to_width(candidate, max_width) for candidate in candidates if candidate
+    ]
+    trimmed_candidates = [candidate for candidate in trimmed_candidates if candidate]
+    if not trimmed_candidates:
+        return normalized
+
+    return max(trimmed_candidates, key=lambda value: (display_width(value), len(value)))
+
+
+def prefer_full_anchor_text(visible_text: str, attribute_text: str) -> str:
+    visible = clean_text(visible_text)
+    attribute = clean_text(attribute_text)
+
+    if not attribute:
+        return visible
+    if not visible:
+        return attribute
+    if visible.endswith(("...", "\u2026")):
+        return attribute
+    if len(attribute) > len(visible) and visible in attribute:
+        return attribute
+    return visible
 
 
 def fetch_html(url: str, timeout: int = DEFAULT_TIMEOUT) -> str:
@@ -296,7 +473,14 @@ class NaverSearchParser(HTMLParser):
         target = attr_map.get("data-heatmap-target")
         href = html.unescape(attr_map.get("href") or "")
         if target in {".nav", ".tit", ".body"} and href.startswith("http"):
-            self.current_anchor = {"target": target, "href": href, "text_parts": []}
+            self.current_anchor = {
+                "target": target,
+                "href": href,
+                "text_parts": [],
+                "label": (attr_map.get("title") or attr_map.get("aria-label") or "")
+                if target == ".tit"
+                else "",
+            }
 
     def handle_data(self, data: str) -> None:
         if self.skip_depth > 0:
@@ -325,6 +509,8 @@ class NaverSearchParser(HTMLParser):
         target = self.current_anchor["target"]
         href = self.current_anchor["href"]
         text = clean_text("".join(self.current_anchor["text_parts"]))
+        if target == ".tit":
+            text = prefer_full_anchor_text(text, self.current_anchor.get("label", ""))
         self.current_anchor = None
 
         if target == ".nav":
@@ -437,6 +623,9 @@ class ArticleMetaParser(HTMLParser):
         super().__init__()
         self.description = ""
         self.published_candidates: list[str] = []
+        self.title_candidates: list[str] = []
+        self.capture_title = False
+        self.title_parts: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr_map = dict(attrs)
@@ -453,11 +642,29 @@ class ArticleMetaParser(HTMLParser):
             keys = {name, prop, itemprop}
             if content and keys & PUBLISHED_META_FIELDS:
                 self.published_candidates.append(content)
+            if content and keys & TITLE_META_FIELDS:
+                self.title_candidates.append(content)
 
         if tag == "time":
             datetime_attr = clean_text(attr_map.get("datetime") or attr_map.get("content") or "")
             if datetime_attr:
                 self.published_candidates.append(datetime_attr)
+
+        if tag == "title":
+            self.capture_title = True
+            self.title_parts = []
+
+    def handle_data(self, data: str) -> None:
+        if self.capture_title:
+            self.title_parts.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "title" and self.capture_title:
+            title_text = clean_text("".join(self.title_parts))
+            if title_text:
+                self.title_candidates.append(title_text)
+            self.capture_title = False
+            self.title_parts = []
 
 
 def looks_like_template_text(text: str) -> bool:
@@ -497,6 +704,48 @@ def extract_article_published_at(article_html: str) -> datetime | None:
         if published_at is not None:
             return published_at
     return None
+
+
+def score_title_candidate(candidate: str, fallback_title: str = "") -> int:
+    normalized = normalize_article_title(candidate)
+    if not normalized or looks_like_template_text(normalized):
+        return -1
+
+    score = min(display_width(normalized), 160)
+    if candidate.endswith(("...", "\u2026")):
+        score -= 80
+
+    fallback_tokens = set(tokenize(strip_trailing_ellipsis(fallback_title)))
+    candidate_tokens = set(tokenize(normalized))
+    if fallback_tokens and candidate_tokens:
+        score += len(fallback_tokens & candidate_tokens) * 12
+    if len(candidate_tokens) >= 3:
+        score += 8
+    return score
+
+
+def extract_article_title(article_html: str, fallback_title: str = "") -> str:
+    meta_parser = ArticleMetaParser()
+    meta_parser.feed(article_html)
+    meta_parser.close()
+
+    seen_candidates: set[str] = set()
+    ordered_candidates = [fallback_title, *meta_parser.title_candidates]
+    best_title = normalize_article_title(fallback_title)
+    best_score = score_title_candidate(best_title, fallback_title)
+
+    for candidate in ordered_candidates:
+        normalized = normalize_article_title(candidate)
+        if not normalized or normalized in seen_candidates:
+            continue
+        seen_candidates.add(normalized)
+
+        score = score_title_candidate(normalized, fallback_title)
+        if score > best_score:
+            best_title = normalized
+            best_score = score
+
+    return best_title or normalize_article_title(fallback_title)
 
 
 def tokenize(text: str) -> list[str]:
@@ -688,8 +937,10 @@ def apply_llm_summaries(keyword: str, articles: list[dict[str, Any]]) -> str:
 
 
 def enrich_article(article: dict[str, Any], keyword: str) -> dict[str, Any]:
+    original_title = article.get("title", "")
     content = article.get("preview_text", "")
     published_dt = article.get("published_dt")
+    resolved_title = normalize_article_title(original_title)
     candidate_urls = [article.get("naver_link", ""), article["url"]]
     seen_candidates: set[str] = set()
 
@@ -706,6 +957,13 @@ def enrich_article(article: dict[str, Any], keyword: str) -> dict[str, Any]:
         if extracted and score_article_text(extracted) > score_article_text(content):
             content = extracted
 
+        extracted_title = extract_article_title(article_html, resolved_title)
+        if score_title_candidate(extracted_title, resolved_title) > score_title_candidate(
+            resolved_title,
+            resolved_title,
+        ):
+            resolved_title = extracted_title
+
         extracted_published_at = extract_article_published_at(article_html)
         if extracted_published_at is not None:
             published_dt = extracted_published_at
@@ -713,6 +971,7 @@ def enrich_article(article: dict[str, Any], keyword: str) -> dict[str, Any]:
         if content and published_dt is not None:
             break
 
+    article["title"] = resolved_title or article["title"]
     content = content or article["title"]
     summary_lines = summarize_text_lines(content, f"{keyword} {article['title']}", line_count=3)
     if not summary_lines:
@@ -722,6 +981,8 @@ def enrich_article(article: dict[str, Any], keyword: str) -> dict[str, Any]:
     article["source"] = extract_source_name(article["url"])
     article["published_dt"] = published_dt
     article["published_at"] = format_published_at(published_dt, article.get("published_at", ""))
+    article["lead_title"] = build_display_title(article["title"], LEAD_TITLE_MAX_WIDTH)
+    article["card_title"] = build_display_title(article["title"], CARD_TITLE_MAX_WIDTH)
     article["summary_lines"] = summary_lines
     article["summary"] = "\n".join(summary_lines)
     article["summary_provider"] = "extractive"
@@ -746,6 +1007,8 @@ def get_news(keyword: str) -> list[dict[str, Any]]:
     return [
         {
             "title": article["title"],
+            "lead_title": article.get("lead_title", article["title"]),
+            "card_title": article.get("card_title", article["title"]),
             "source": article["source"],
             "url": article["url"],
             "published_at": article["published_at"],
