@@ -34,7 +34,13 @@ if st.button("요약하기"):
             st.write(data["summary"])
 
             st.subheader("음성")
-            st.audio(full_audio_url, format="audio/mp3")
+            try:
+                audio_response = httpx.get(full_audio_url, timeout=30.0)
+                audio_response.raise_for_status()
+            except httpx.HTTPError as exc:
+                st.error(f"음성 파일을 불러오지 못했습니다: {exc}")
+            else:
+                st.audio(audio_response.content, format="audio/mp3")
 
             st.subheader("기사별 한줄 요약")
             for index, article in enumerate(data["articles"], start=1):
