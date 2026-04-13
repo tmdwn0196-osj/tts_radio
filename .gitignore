@@ -13,4 +13,7 @@ backend/data/audio/
 Thumbs.db
 .idea/
 .vscode/
+tools/ffmpeg/
+tools/*.zip
+tools/*.sha256
 

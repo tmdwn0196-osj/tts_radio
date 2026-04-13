@@ -1,10 +1,35 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import tempfile
 import uuid
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_FFMPEG_BIN = PROJECT_ROOT / "tools" / "ffmpeg" / "bin"
+
+
+def _bootstrap_ffmpeg_path() -> None:
+    env_bin_dir = os.getenv("FFMPEG_BIN_DIR")
+    for raw_dir in (env_bin_dir, str(DEFAULT_FFMPEG_BIN)):
+        if not raw_dir:
+            continue
+
+        bin_dir = Path(raw_dir).expanduser()
+        if not bin_dir.exists():
+            continue
+
+        current_path = os.environ.get("PATH", "")
+        entries = current_path.split(os.pathsep) if current_path else []
+        bin_dir_str = str(bin_dir)
+        if bin_dir_str not in entries:
+            os.environ["PATH"] = bin_dir_str if not current_path else f"{bin_dir_str}{os.pathsep}{current_path}"
+        return
+
+
+_bootstrap_ffmpeg_path()
 
 import edge_tts
 from gtts import gTTS
@@ -35,6 +60,49 @@ VOICE_PRESETS = {
 
 class AudioGenerationError(Exception):
     pass
+
+
+def _resolve_binary(bin_dir: Path, name: str) -> Path | None:
+    for candidate_name in (f"{name}.exe", name):
+        candidate = bin_dir / candidate_name
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _prepend_to_path(bin_dir: Path) -> None:
+    current_path = os.environ.get("PATH", "")
+    entries = current_path.split(os.pathsep) if current_path else []
+    bin_dir_str = str(bin_dir)
+    if bin_dir_str in entries:
+        return
+    os.environ["PATH"] = bin_dir_str if not current_path else f"{bin_dir_str}{os.pathsep}{current_path}"
+
+
+def _configure_ffmpeg() -> None:
+    candidate_dirs: list[Path] = []
+    env_bin_dir = os.getenv("FFMPEG_BIN_DIR")
+    if env_bin_dir:
+        candidate_dirs.append(Path(env_bin_dir).expanduser())
+    candidate_dirs.append(DEFAULT_FFMPEG_BIN)
+
+    for bin_dir in candidate_dirs:
+        ffmpeg_path = _resolve_binary(bin_dir, "ffmpeg")
+        ffprobe_path = _resolve_binary(bin_dir, "ffprobe")
+        if not ffmpeg_path and not ffprobe_path:
+            continue
+
+        _prepend_to_path(bin_dir)
+        if ffmpeg_path:
+            ffmpeg_str = str(ffmpeg_path)
+            AudioSegment.converter = ffmpeg_str
+            AudioSegment.ffmpeg = ffmpeg_str
+        if ffprobe_path:
+            AudioSegment.ffprobe = str(ffprobe_path)
+        return
+
+
+_configure_ffmpeg()
 
 
 def _clean_text(text: str) -> str:
