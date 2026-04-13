@@ -1,90 +1,80 @@
+# 나만의 1분 AI 라디오
 
-# 기사 요약봇
+사용자가 관심 있는 주제를 선택하면 Tavily로 최신 뉴스를 수집하고, GPT-5.4-mini로 핵심만 짧게 요약해 라디오 대본 형태로 만드는 프로젝트입니다. 이후 시보 느낌의 짧은 인트로를 붙이고, `edge-tts`를 기본으로 사용해 음성을 생성합니다. `edge-tts`가 실패하면 `gTTS`로 자동 fallback 됩니다.
 
-키워드를 입력하면 최신 뉴스 기사를 수집하고, 기사별 요약과 음성 파일을 함께 제공하는
-`Streamlit + FastAPI` 기반 대시보드 프로젝트입니다.
+발표용 한 줄 소개:
 
-# 타겟층
-바쁜 현대 사회를 살아가며 아침 시간에 핵심 이슈를 빠르고 간편하게 확인하고자 하는 직장인
+> Tavily로 최신 뉴스를 가져오고, GPT-5.4-mini로 1분 대본을 만든 뒤, 시보 느낌의 인트로와 TTS로 라디오처럼 들려주는 개인화 뉴스 서비스입니다.
 
-# 서비스 목적
-출근 준비와 이동으로 바쁜 직장인들에게 최근 주요 소식을 빠르고 간결하게 전달하여, 짧은 시간 안에 필요한 정보만 효율적으로 파악할 수 있도록 돕는 것
-
-# 기획 의도
-직장인들은 아침 시간에 뉴스 여러 개를 직접 확인할 여유가 부족하므로, 기사요약봇이 핵심 뉴스만 선별하고 짧게 요약해 음성 또는 텍스트로 제공함으로써 출근길 정보 소비를 더욱 편리하게 만들어주는 서비스
-
-## 프로젝트 구조
+## 구조
 
 ```text
-news/
+tts_radio/
 ├─ backend/
 │  ├─ api/
 │  │  └─ main.py
 │  └─ data/
-│     └─ news.py
+│     ├─ news.py
+│     ├─ briefing.py
+│     ├─ audio_pipeline.py
+│     └─ audio/
 ├─ frontend/
 │  └─ streamlit_app.py
-├─ shared/
 ├─ .streamlit/
+├─ shared/
 ├─ .env.example
 ├─ pyproject.toml
-├─ requirements.txt
-└─ uv.lock
+└─ README.md
 ```
 
-## 역할 기준
+## 핵심 흐름
 
-- `frontend/streamlit_app.py`: Streamlit UI
-- `backend/api/main.py`: FastAPI 서버와 API 엔드포인트
-- `backend/data/news.py`: 뉴스 수집, 기사 요약, TTS 생성 로직
-- `shared/`: 공통 모듈 확장용 폴더
+1. 사용자가 Streamlit에서 주제와 목소리 프리셋을 고릅니다.
+2. FastAPI가 Tavily Search API로 최신 뉴스 최대 5건을 수집합니다.
+3. GPT-5.4-mini가 기사들을 바탕으로 45초에서 60초 분량의 라디오 대본을 생성합니다.
+4. 오리지널 3-pip 시보형 인트로를 붙인 뒤 `edge-tts` 또는 `gTTS`로 오디오를 생성합니다.
+5. Streamlit이 대본, 오디오, 출처 기사 목록을 함께 보여줍니다.
 
-## 주요 기능
+## 사용 기술
 
-- 키워드 기반 뉴스 검색
-- 최신 기사 최대 5건 정리
-- 기사별 3줄 요약 생성
-- 요약 결과 음성(mp3) 생성
-- FastAPI API와 Streamlit 화면 분리
+- FastAPI
+- Streamlit
+- Tavily Search API
+- OpenAI Responses API with `gpt-5.4-mini`
+- `edge-tts` with `gTTS` fallback
+- `pydub` for signal intro and audio stitching
 
-## 동작 흐름
+## 환경 변수
 
-1. Streamlit에서 키워드를 입력합니다.
-2. 프론트엔드가 FastAPI의 `/summarize`를 호출합니다.
-3. 백엔드가 뉴스 기사를 수집하고 요약을 생성합니다.
-4. 요약 내용을 바탕으로 음성 파일을 생성합니다.
-5. Streamlit에서 기사 요약과 오디오를 함께 보여줍니다.
+`.env.example`를 참고해 `.env`를 만들어 주세요.
 
-## 로컬 실행
+```env
+API_HOST=127.0.0.1
+API_PORT=8000
+STREAMLIT_PORT=8501
+TAVILY_API_KEY=
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-5.4-mini
+```
 
-이 프로젝트는 `uv` 기준으로 관리합니다.
+## 실행 방법
 
 ```powershell
 uv venv
 uv sync
 uv run uvicorn backend.api.main:app --reload
 uv run streamlit run frontend/streamlit_app.py --server.port 8501
-(.env는 .env.example을 참고하여 API_KEY 활용할 것)
 ```
 
-## 환경 변수
+## 주의 사항
 
-`.env.example` 기준:
-
-```env
-APP_ENV=local
-API_HOST=127.0.0.1
-API_PORT=8000
-STREAMLIT_PORT=8501
-```
+- `pydub`가 최종 MP3를 합칠 때 `ffmpeg`가 필요합니다. 시스템 PATH에 `ffmpeg`가 잡혀 있어야 합니다.
+- `MiniMax`, voice cloning, XTTS/Coqui 같은 기능은 이번 버전에서 제외했습니다.
+- 시그널 송은 방송 시보의 느낌만 참고한 짧은 오리지널 톤이며, 특정 방송사의 시보음을 그대로 복제하지 않습니다.
 
 ## API
 
 ### `GET /health`
-
-서버 상태 확인용 엔드포인트입니다.
-
-응답 예시:
 
 ```json
 {
@@ -92,28 +82,41 @@ STREAMLIT_PORT=8501
 }
 ```
 
-### `POST /summarize`
+### `POST /briefing`
 
-키워드를 받아 기사 요약 결과와 음성 파일 URL을 반환합니다.
-
-요청 예시:
+요청:
 
 ```json
 {
-  "keyword": "경제"
+  "topic": "AI",
+  "voice_preset": "anchor_female"
 }
 ```
 
-응답 항목:
+응답 예시:
 
-- `keyword`
-- `articles`
-- `summary`
-- `summary_provider`
-- `audio_url`
+```json
+{
+  "topic": "AI",
+  "articles": [
+    {
+      "title": "기사 제목",
+      "url": "https://example.com/article",
+      "source": "example.com",
+      "published_at": "2026-04-13 09:00",
+      "snippet": "짧은 요약",
+      "content": "브리핑 생성에 사용된 본문 일부"
+    }
+  ],
+  "script": "안녕하세요. 오늘의 AI 1분 브리핑입니다...",
+  "tts_engine": "edge-tts",
+  "voice_preset": "anchor_female",
+  "audio_url": "/audio/xxxxxxxx.mp3"
+}
+```
 
-## 참고
+지원하는 `voice_preset`:
 
-- 가상환경은 `uv sync`로 맞춥니다.
-- 오디오 파일은 백엔드에서 생성되며 `/audio/...` 경로로 서빙됩니다.
-- README는 현재 저장소에 있는 파일 기준으로 작성되어 있습니다.
+- `anchor_female`
+- `anchor_male`
+- `calm`
