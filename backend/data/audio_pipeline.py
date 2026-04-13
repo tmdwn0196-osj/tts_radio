@@ -42,18 +42,18 @@ AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 VOICE_PRESETS = {
     "anchor_female": {
         "voice": "ko-KR-SunHiNeural",
-        "rate": "+0%",
-        "pitch": "+0Hz",
+        "rate": "-4%",
+        "pitch": "-6Hz",
     },
     "anchor_male": {
         "voice": "ko-KR-InJoonNeural",
-        "rate": "+0%",
-        "pitch": "+0Hz",
+        "rate": "-3%",
+        "pitch": "-3Hz",
     },
     "calm": {
         "voice": "ko-KR-SunHiNeural",
-        "rate": "-12%",
-        "pitch": "-5Hz",
+        "rate": "-9%",
+        "pitch": "-8Hz",
     },
 }
 

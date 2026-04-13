@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import html
 import os
+import random
 from datetime import datetime
+from itertools import zip_longest
 
 import httpx
 import streamlit as st
@@ -15,19 +17,91 @@ api_port = os.getenv("API_PORT", "8000")
 api_base_url = f"http://{api_host}:{api_port}"
 briefing_url = f"{api_base_url}/briefing"
 
-TOPIC_OPTIONS = [
-    "AI",
-    "반도체",
-    "경제",
-    "부동산",
-    "테크",
-    "K-POP",
-    "스포츠",
+TOPIC_GROUPS = [
+    (
+        "Tech & AI",
+        [
+            "AI",
+            "AI agents",
+            "반도체",
+            "로봇",
+            "양자컴퓨팅",
+            "사이버보안",
+            "자율주행",
+            "우주산업",
+        ],
+    ),
+    (
+        "Markets & Business",
+        [
+            "미국 증시",
+            "금리",
+            "환율",
+            "부동산",
+            "스타트업 투자",
+            "배터리",
+            "에너지 시장",
+            "유통",
+        ],
+    ),
+    (
+        "Policy & Global",
+        [
+            "한국 정치",
+            "미국 정치",
+            "중국 경제",
+            "관세",
+            "중동 정세",
+            "우크라이나",
+            "기후 정책",
+            "공급망",
+        ],
+    ),
+    (
+        "Culture & Entertainment",
+        [
+            "K-POP",
+            "넷플릭스",
+            "영화",
+            "게임",
+            "웹툰",
+            "패션",
+            "여행",
+            "푸드 트렌드",
+        ],
+    ),
+    (
+        "Sports & Lifestyle",
+        [
+            "축구",
+            "야구",
+            "농구",
+            "올림픽",
+            "러닝",
+            "헬스케어",
+            "수면",
+            "웰니스",
+        ],
+    ),
+    (
+        "Science & Future",
+        [
+            "우주 탐사",
+            "기후테크",
+            "바이오",
+            "신약 개발",
+            "드론",
+            "스마트시티",
+            "교육 테크",
+            "푸드테크",
+        ],
+    ),
 ]
+TOPIC_OPTIONS = list(dict.fromkeys(topic for _, topics in TOPIC_GROUPS for topic in topics))
 VOICE_OPTIONS = {
     "anchor_female": "아나운서 톤 (여성)",
     "anchor_male": "아나운서 톤 (남성)",
-    "calm": "차분한 톤",
+    "calm": "차분한 브리핑 톤",
 }
 
 
@@ -178,6 +252,12 @@ def inject_styles() -> None:
             text-decoration: none;
         }
 
+        .topic-help {
+            margin: 0.2rem 0 1rem;
+            color: var(--muted);
+            line-height: 1.65;
+        }
+
         div[data-testid="stTextInputRootElement"] input,
         div[data-baseweb="select"] > div {
             border-radius: 16px !important;
@@ -203,6 +283,28 @@ def current_issue_label() -> str:
     return datetime.now().strftime("%Y.%m.%d | MORNING EDITION")
 
 
+def build_daily_topic_picks(limit: int = 12, per_group: int = 2) -> list[str]:
+    picks: list[str] = []
+    date_seed = datetime.now().strftime("%Y%m%d")
+
+    for group_index, (_, topics) in enumerate(TOPIC_GROUPS):
+        group_topics = topics[:]
+        random.Random(f"{date_seed}:{group_index}").shuffle(group_topics)
+        picks.extend(group_topics[:per_group])
+
+    random.Random(date_seed).shuffle(picks)
+    return picks[:limit]
+
+
+def chunked(values: list[str], width: int) -> list[tuple[str | None, ...]]:
+    return list(zip_longest(*[iter(values)] * width, fillvalue=None))
+
+
+def select_quick_topic(topic: str) -> None:
+    st.session_state["selected_topic"] = topic
+    st.session_state["custom_topic"] = ""
+
+
 def render_hero() -> None:
     st.markdown(
         f"""
@@ -213,13 +315,39 @@ def render_hero() -> None:
             </div>
             <h1 class="hero__title">나만의 1분 AI 라디오</h1>
             <p class="hero__body">
-                Tavily로 최신 뉴스를 가져오고, GPT-5.4-mini로 1분 대본을 만든 뒤,
-                시보 느낌의 짧은 인트로와 TTS로 라디오처럼 들려주는 개인화 뉴스 서비스입니다.
+                최신 뉴스를 모아 1분 브리핑과 음성으로 정리해주는 개인 맞춤형 라디오입니다.
+                관심 주제를 고르면 빠르게 핵심만 추려서 들을 수 있어요.
             </p>
         </section>
         """,
         unsafe_allow_html=True,
     )
+
+
+def render_topic_quick_picks() -> None:
+    picks = build_daily_topic_picks()
+    st.markdown(
+        f'<p class="topic-help">오늘의 추천 주제 {len(picks)}개를 골라뒀어요. 버튼을 누르면 아래 입력값에 바로 반영됩니다.</p>',
+        unsafe_allow_html=True,
+    )
+
+    for row_index, row in enumerate(chunked(picks, 3)):
+        columns = st.columns(3)
+        for column_index, topic in enumerate(row):
+            if topic is None:
+                continue
+            columns[column_index].button(
+                topic,
+                key=f"quick_topic_{row_index}_{column_index}_{topic}",
+                use_container_width=True,
+                on_click=select_quick_topic,
+                args=(topic,),
+            )
+
+    with st.expander(f"추천 주제 전체 보기 ({len(TOPIC_OPTIONS)}개)"):
+        for category, topics in TOPIC_GROUPS:
+            st.markdown(f"**{category}**")
+            st.caption(" · ".join(topics))
 
 
 def render_input_panel() -> bool:
@@ -229,18 +357,24 @@ def render_input_panel() -> bool:
             <div class="panel__eyebrow">Daily Setup</div>
             <h2 class="panel__title">오늘 듣고 싶은 주제와 목소리를 고르세요</h2>
             <p class="panel__body">
-                추천 주제를 고르거나 직접 입력하면, 1분 안팎의 오디오 브리핑으로 정리해드립니다.
+                추천 주제를 바로 고르거나 직접 입력하면, 최신 기사 중심의 1분 브리핑으로 정리해드립니다.
             </p>
         </section>
         """,
         unsafe_allow_html=True,
     )
 
+    render_topic_quick_picks()
+
     with st.form("briefing_form", border=False):
         st.selectbox("추천 주제", TOPIC_OPTIONS, key="selected_topic")
-        st.text_input("직접 입력", key="custom_topic", placeholder="예: 로봇, 미국 증시, 생성형 AI")
+        st.text_input(
+            "직접 입력",
+            key="custom_topic",
+            placeholder="예: 오픈AI, 미국 증시, 생성형 AI, 전기차",
+        )
         st.selectbox(
-            "목소리 프리셋",
+            "목소리 스타일",
             options=list(VOICE_OPTIONS.keys()),
             format_func=lambda value: VOICE_OPTIONS[value],
             key="voice_preset",
@@ -287,13 +421,14 @@ def render_results(data: dict) -> None:
     tts_engine = data["tts_engine"]
     script = data["script"]
     articles = data.get("articles", [])
+    script_html = html.escape(script).replace("\n", "<br>")
 
     st.markdown(
         f"""
         <section class="result-card">
             <div class="result-card__label">Radio Script</div>
             <h3 class="result-card__title">{html.escape(topic)} 브리핑 원고</h3>
-            <div class="script-box">{html.escape(script)}</div>
+            <div class="script-box">{script_html}</div>
         </section>
         """,
         unsafe_allow_html=True,
@@ -335,6 +470,10 @@ st.set_page_config(page_title="나만의 1분 AI 라디오", layout="wide")
 inject_styles()
 render_hero()
 
+if "selected_topic" not in st.session_state:
+    st.session_state["selected_topic"] = TOPIC_OPTIONS[0]
+if "custom_topic" not in st.session_state:
+    st.session_state["custom_topic"] = ""
 if "briefing_data" not in st.session_state:
     st.session_state["briefing_data"] = None
 
@@ -346,7 +485,7 @@ if submitted:
     if not topic:
         st.warning("주제를 하나 선택하거나 직접 입력해 주세요.")
     else:
-        with st.spinner("최신 뉴스를 모아 1분 브리핑을 만드는 중입니다..."):
+        with st.spinner("최신 기사를 모아서 1분 브리핑을 만들고 있습니다..."):
             try:
                 st.session_state["briefing_data"] = request_briefing(topic, voice_preset)
             except httpx.HTTPError as error:
